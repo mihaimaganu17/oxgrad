@@ -1,6 +1,6 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+mod value;
+
+pub use value::{Value, Op};
 
 #[cfg(test)]
 mod tests {
@@ -8,7 +8,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+        let a = Value::new(10.0);
+        let b = Value::new(-3.0);
+        println!("{:?}", a*b);
     }
 }
