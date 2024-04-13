@@ -1,28 +1,44 @@
 use std::{
     ops::{Add, Mul},
     fmt::{self, Debug},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
+pub static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(PartialEq)]
 pub struct Value<T: Debug> {
     pub data: T,
-    _prev: Vec<Value<T>>,
-    _op: Op,
+    pub prev: Vec<Value<T>>,
+    pub op: Option<Op>,
+    pub id: usize,
+    pub label: String,
 }
 
 impl<T> Value<T>
 where T:
     fmt::Debug + Add + Mul,
 {
-    pub fn new(data: T) -> Self {
-        Self::new_with_fields(data, vec![], Op::None)
+    pub fn new(data: T, label: &str) -> Self {
+        Self::new_with_fields(data, vec![], None, label)
     }
 
     // Can be replaced by a builder
-    pub fn new_with_fields(data: T, children: Vec<Self>, op: Op) -> Self {
+    pub fn new_with_fields(data: T, children: Vec<Self>, op: Option<Op>, label: &str) -> Self {
         Self {
             data,
-            _prev: children,
-            _op: op,
+            prev: children,
+            op,
+            id: UNIQUE_ID.fetch_add(1, Ordering::Relaxed),
+            label: label.to_string(),
+        }
+    }
+
+    pub fn op_id(&self) -> usize {
+        if let Some(op) = &self.op {
+            usize::from(op)
+        } else {
+            0
         }
     }
 }
@@ -37,7 +53,7 @@ where T:
         let data = self.data.clone() + rhs.data.clone();
         let children = vec![self, rhs];
 
-        Self::new_with_fields(data, children, Op::Add)
+        Self::new_with_fields(data, children, Some(Op::Add), "")
     }
 }
 
@@ -51,7 +67,7 @@ where T:
         let data = self.data.clone() * rhs.data.clone();
         let children = vec![self, rhs];
 
-        Self::new_with_fields(data, children, Op::Mul)
+        Self::new_with_fields(data, children, Some(Op::Mul), "")
     }
 }
 
@@ -65,8 +81,32 @@ where T:
 }
 
 /// Operation performed
+#[derive(PartialEq)]
 pub enum Op {
     Add,
     Mul,
-    None,
+}
+
+impl From<&Op> for usize {
+    fn from(op: &Op) -> usize {
+        match op {
+            Op::Add => 1,
+            Op::Mul => 2,
+        }
+    }
+}
+
+impl Debug for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            Op::Add => write!(f, "+"),
+            Op::Mul => write!(f, "*"),
+        }
+    }
+}
+
+impl ToString for Op {
+    fn to_string(&self) -> String {
+        format!("{self:?}")
+    }
 }

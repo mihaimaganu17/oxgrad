@@ -8,8 +8,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let a = Value::new(10.0);
-        let b = Value::new(-3.0);
+        let a = Value::new(10.0, "a");
+        let b = Value::new(-3.0, "b");
         println!("{:?}", a*b);
     }
 }
