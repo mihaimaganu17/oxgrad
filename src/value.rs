@@ -1,11 +1,15 @@
 use std::{
-    ops::{Add, Mul},
+    ops::{Add, Sub, Mul},
     fmt::{self, Debug},
     sync::atomic::{AtomicUsize, Ordering},
+    collections::VecDeque,
 };
 
 pub trait Tanh {
     fn tanh(self) -> Self;
+}
+
+pub trait Pow {
     fn powi(self, pow: i32) -> Self;
 }
 
@@ -21,6 +25,9 @@ impl Tanh for f64 {
     fn tanh(self) -> Self {
         ((self * 2.0).exp() - 1.0) / ((self * 2.0).exp() + 1.0)
     }
+}
+
+impl Pow for f64 {
     fn powi(self, pow: i32) -> Self {
         self.powi(pow)
     }
@@ -46,7 +53,7 @@ pub struct Value<T: Debug + Clone + Zero + One> {
     // Value of the derivative of the output with respect to this current value
     pub grad: T,
     // Function which applies chain rule, given the current gradient to underlying `children` nodes
-    backward: Option<fn(&mut Vec<Value<T>>, &T)>,
+    pub _backward: Option<fn(&mut Vec<Value<T>>, &T)>,
 }
 
 impl<T> Value<T>
@@ -62,7 +69,7 @@ where T:
         data: T,
         children: Vec<Self>,
         op: Option<Op>,
-        backward: Option<fn(&mut Vec<Value<T>>, &T)>,
+        _backward: Option<fn(&mut Vec<Value<T>>, &T)>,
         label: &str,
     ) -> Self {
         Self {
@@ -72,7 +79,7 @@ where T:
             id: UNIQUE_ID.fetch_add(1, Ordering::Relaxed),
             label: label.to_string(),
             grad: T::zero(),
-            backward,
+            _backward,
         }
     }
 
@@ -83,11 +90,29 @@ where T:
             0
         }
     }
+
+    pub fn backward(&self) {
+        fn topo_sort<T>(root: &Value<T>) -> Vec<&Value<T>>
+        where T: std::fmt::Debug + std::ops::Add + std::ops::Mul + Clone + Zero + One,
+        {
+            let mut topo = vec![];
+            let mut to_visit = VecDeque::from([root]);
+            while let Some(node) = to_visit.pop_front() {
+                for idx in 0..node.prev.len() {
+                    to_visit.push_back(&node.prev[idx]);
+                }
+                topo.push(node);
+            }
+            topo
+        }
+        let _topo = topo_sort(self);
+        println!("{:#?}", _topo);
+    }
 }
 
 impl<T> Add for Value<T>
 where T:
-    fmt::Debug + Clone + Add<Output=T> + Mul + Tanh + Zero + One,
+    fmt::Debug + Clone + Add<Output=T> + Mul<Output=T> + Pow + Tanh + Zero + One,
 {
     type Output = Self;
 
@@ -99,9 +124,23 @@ where T:
     }
 }
 
+impl<T> Sub for Value<T>
+where T:
+    fmt::Debug + Clone + Add + Sub<Output=T> + Mul + Pow + Tanh + Zero + One,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let data = self.data.clone() - rhs.data.clone();
+        let children = vec![self, rhs];
+
+        Self::new_with_fields(data, children, Some(Op::Sub), None, "")
+    }
+}
+
 fn add_backward<T>(children: &mut Vec<Value<T>>, local_grad: &T)
 where T:
-    fmt::Debug + Clone + Add + Mul + Tanh + Zero + One,
+    fmt::Debug + Clone + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
 {
     assert!(children.len() == 2);
     // This is a plus / add operation, so every child node basically propagate the result
@@ -113,7 +152,7 @@ where T:
 
 fn mul_backward<T>(children: &mut Vec<Value<T>>, local_grad: &T)
 where T:
-    fmt::Debug + Clone + Add + Mul<Output=T>  + Tanh + Zero + One,
+    fmt::Debug + Clone + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
 {
     // This should contain only 2 elements.
     assert!(children.len() == 2);
@@ -121,18 +160,18 @@ where T:
     children[1].grad = children[0].data.clone() * local_grad.clone();
 }
 
-fn tanh<T>(children: &mut Vec<Value<T>>, local_grad: &T)
+fn tanh_backward<T>(children: &mut Vec<Value<T>>, local_grad: &T)
 where T:
-    fmt::Debug + Clone + Add + Mul<Output=T>  + Tanh + Zero + One,
+    fmt::Debug + Clone + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One,
 {
     // This should contain only 2 elements.
     assert!(children.len() == 1);
-    children[0].grad = T::one() - children[0].data.powi(2);
+    children[0].grad = (T::one() - children[0].data.clone().powi(2)) * local_grad.clone();
 }
 
 impl<T> Mul for Value<T>
 where T:
-    fmt::Debug + Clone + Add + Mul<Output=T> + Tanh + Zero + One,
+    fmt::Debug + Clone + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
 {
     type Output = Self;
 
@@ -155,13 +194,13 @@ where T:
 
 impl<T> Tanh for Value<T>
 where T:
-    fmt::Debug + Clone + Add + Mul + Tanh + Zero + One,
+    fmt::Debug + Clone + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One,
 {
     fn tanh(self) -> Self {
         let data = self.data.clone().tanh();
         let children = vec![self];
 
-        Self::new_with_fields(data, children, Some(Op::Tanh), None, "")
+        Self::new_with_fields(data, children, Some(Op::Tanh), Some(tanh_backward), "")
     }
 }
 
@@ -169,6 +208,7 @@ where T:
 #[derive(PartialEq, Clone)]
 pub enum Op {
     Add,
+    Sub,
     Mul,
     Tanh,
 }
@@ -177,8 +217,9 @@ impl From<&Op> for usize {
     fn from(op: &Op) -> usize {
         match op {
             Op::Add => 1,
-            Op::Mul => 2,
-            Op::Tanh=> 3,
+            Op::Sub => 2,
+            Op::Mul => 3,
+            Op::Tanh=> 4,
         }
     }
 }
@@ -187,6 +228,7 @@ impl Debug for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             Op::Add => write!(f, "+"),
+            Op::Sub => write!(f, "-"),
             Op::Mul => write!(f, "*"),
             Op::Tanh => write!(f, "tanh"),
         }
