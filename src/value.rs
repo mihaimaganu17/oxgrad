@@ -176,8 +176,6 @@ where T:
 {
     // This should contain only 2 elements.
     assert!(children.len() == 1);
-    println!("{:?}", local_grad);
-    println!("{:#?}", children);
     children[0].grad.set((T::one() - children[0].data.clone().tanh().powi(2)) * local_grad.clone());
 }
 
