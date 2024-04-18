@@ -10,7 +10,7 @@ mod tests {
     fn it_works() {
         let a = Value::new(10.0, "a");
         let b = Value::new(-3.0, "b");
-        let mut c = a*b.clone();
+        let c = a*b;
         c.backward();
     }
 }
