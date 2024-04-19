@@ -44,8 +44,8 @@ impl One for f64 {
 
 pub static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(PartialEq)]
-pub struct Value<T: Debug + Clone + Copy + Zero + One> {
+#[derive(PartialEq, Clone)]
+pub struct Value<T: Debug + Clone + Copy + Zero + One + Default> {
     pub data: T,
     pub prev: Vec<Value<T>>,
     pub op: Option<Op>,
@@ -54,14 +54,17 @@ pub struct Value<T: Debug + Clone + Copy + Zero + One> {
     // Value of the derivative of the output with respect to this current value
     // Idea: Make grad a separate type which get value which is created by given `Value` as an
     // input
+    // Alternatively this might even be a OnceCell because once we set the gradient, there is no
+    // reason for it to change, unless we change the underlying `backward` function, at which
+    // point there should be another `Value object` defined
     pub grad: Cell<T>,
     // Function which applies chain rule, given the current gradient to underlying `children` nodes
-    pub _backward: Option<fn(&[Value<T>], T)>,
+    _backward: Option<fn(&[Value<T>], T)>,
 }
 
 impl<T> Value<T>
 where T:
-    fmt::Debug + Clone + Copy + Add + Mul + Zero + One + ,
+    fmt::Debug + Clone + Copy + Add + Mul + Zero + One + Default,
 {
     pub fn new(data: T, label: &str) -> Self {
         Self::new_with_fields(data, vec![], None, None, label)
@@ -96,7 +99,8 @@ where T:
 
     pub fn backward(&self) {
         fn topo_sort<T>(root: &Value<T>) -> Vec<&Value<T>>
-        where T: std::fmt::Debug + std::ops::Add + std::ops::Mul + Clone + Copy + Zero + One,
+        where T: std::fmt::Debug + std::ops::Add + std::ops::Mul + Clone + Copy + Zero + One
+            + Default,
         {
             let mut topo = vec![];
             let mut to_visit = VecDeque::from([root]);
@@ -108,6 +112,7 @@ where T:
             }
             topo
         }
+        self.grad.set(T::one());
         let topo = topo_sort(self);
 
         for node in topo {
@@ -120,7 +125,8 @@ where T:
 
 impl<T> Add for Value<T>
 where T:
-    fmt::Debug + Clone + Copy + Add<Output=T> + Mul<Output=T> + Pow + Tanh + Zero + One,
+    fmt::Debug + Clone + Copy + Add<Output=T> + Mul<Output=T> + Pow + Tanh + Zero + One
+    + Default,
 {
     type Output = Self;
 
@@ -132,47 +138,32 @@ where T:
     }
 }
 
-/*
-impl<T> Sub for Value<T>
-where T:
-    fmt::Debug + Clone + Copy + Add + Sub<Output=T> + Mul + Pow + Tanh + Zero + One,
-{
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        let data = self.data.clone() - rhs.data.clone();
-        let children = vec![self, rhs];
-
-        Self::new_with_fields(data, children, Some(Op::Sub), None, "")
-    }
-}
-*/
-
 fn add_backward<T>(children: &[Value<T>], local_grad: T)
 where T:
-    fmt::Debug + Clone + Copy + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
+    fmt::Debug + Clone + Copy + Add<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One + Default,
 {
     assert!(children.len() == 2);
     // This is a plus / add operation, so every child node basically propagate the result
     // as is.
     for v in children.iter() {
-        v.grad.set(T::one() * local_grad);
+        let new_grad = v.grad.take() + (T::one() * local_grad);
+        v.grad.set(new_grad);
     }
 }
 
 fn mul_backward<T>(children: &[Value<T>], local_grad: T)
 where T:
-    fmt::Debug + Clone + Copy + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
+    fmt::Debug + Clone + Copy + Add<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One + Default,
 {
     // This should contain only 2 elements.
     assert!(children.len() == 2);
-    children[0].grad.set(children[1].data.clone() * local_grad.clone());
-    children[1].grad.set(children[0].data.clone() * local_grad.clone());
+    children[0].grad.set(children[0].grad.take() + children[1].data.clone() * local_grad.clone());
+    children[1].grad.set(children[1].grad.take() + children[0].data.clone() * local_grad.clone());
 }
 
 fn tanh_backward<T>(children: &[Value<T>], local_grad: T)
 where T:
-    fmt::Debug + Clone + Copy + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One,
+    fmt::Debug + Clone + Copy + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One + Default,
 {
     // This should contain only 2 elements.
     assert!(children.len() == 1);
@@ -181,7 +172,7 @@ where T:
 
 impl<T> Mul for Value<T>
 where T:
-    fmt::Debug + Clone + Copy + Add + Mul<Output=T> + Tanh + Pow + Zero + One,
+    fmt::Debug + Clone + Copy + Add<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One + Default,
 {
     type Output = Self;
 
@@ -195,7 +186,7 @@ where T:
 
 impl<T> fmt::Debug for Value<T>
 where T:
-    fmt::Debug + Clone + Copy + Zero + One,
+    fmt::Debug + Clone + Copy + Zero + One + Default,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Value(data={:?})", self.data)
@@ -204,7 +195,8 @@ where T:
 
 impl<T> Tanh for Value<T>
 where T:
-    fmt::Debug + Clone + Copy + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One,
+    fmt::Debug + Clone + Copy + Add + Sub<Output=T> + Mul<Output=T> + Tanh + Pow + Zero + One
+    + Default,
 {
     fn tanh(self) -> Self {
         let data = self.data.clone().tanh();

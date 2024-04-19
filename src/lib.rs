@@ -1,6 +1,8 @@
 mod value;
+mod utils;
 
 pub use value::{Value, Op, Tanh, Zero, One};
+pub use utils::trace;
 
 #[cfg(test)]
 mod tests {
